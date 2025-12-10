@@ -26,7 +26,7 @@ nodejs-aks-ingress/
 └─ README.md
 ```
 ## Project Steps
-1 — Created the Node.js app
+### 1 — Created the Node.js app
 
 Commands / files:
 ```plaintext
@@ -43,9 +43,9 @@ const port = process.env.PORT || 3000;
 app.get('/', (req, res) => res.send('Hello, AKS!'));
 app.listen(port, () => console.log(`Server running on ${port}`));
 ```
-**Why:** this is the actual application code. `package.json` records dependencies so Docker and other environments can install them. Express provides a lightweight HTTP server for testing and deployment.
+**Why:** This is the actual application code. `package.json` records dependencies so Docker and other environments can install them. Express provides a lightweight HTTP server for testing and deployment.
 
-2 — Added `.gitignore`
+### 2 — Added `.gitignore`
 
 Contents:
 ```plaintext
@@ -53,9 +53,9 @@ node_modules/
 .env
 .DS_Store
 ```
-**Why:** prevents committing large or sensitive files. `node_modules/` is rebuilt from `package.json`. `.env` often contains secrets and should not be stored in source control.
+**Why:** Prevents committing large or sensitive files. `node_modules/` is rebuilt from `package.json`. `.env` often contains secrets and should not be stored in source control.
 
-3 — Dockerized the app
+### 3 — Dockerized the app
 
 Dockerfile (root):
 ```plaintext
@@ -76,7 +76,7 @@ docker run -p 3000:3000 nodejs-aks-ingress   # test locally
 
 **Why:** Docker creates a portable image that contains your app and its runtime. This ensures the same app behavior whether on your laptop, a CI environment, or in Kubernetes. `COPY package*.json` + `npm install` optimizes layer caching so rebuilding is faster.
 
-4 — Created Kubernetes manifests
+### 4 — Created Kubernetes manifests
 
 Put these in `k8s/`:
 
@@ -129,3 +129,93 @@ spec:
 
 **Why:** Ingress defines external routing rules (host/path → service). The ingress controller (NGINX) reads these and forwards external HTTP(S) to the matching service in the cluster.
 
+### 5 — Provisioned AKS (created cluster)
+
+Commands:
+```plaintext
+az group create --name MyResourceGroup --location eastus
+az aks create --resource-group MyResourceGroup --name myAKSCluster --node-count 2 --enable-managed-identity --generate-ssh-keys
+az aks get-credentials --resource-group MyResourceGroup --name myAKSCluster
+```
+**Why:** AKS is a managed Kubernetes service on Azure. az aks get-credentials configures your kubectl context so subsequent kubectl commands target the new cluster.
+
+### 6 — Installed NGINX Ingress controller (on the cluster)
+
+Command:
+```plaintext
+kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.12.0/deploy/static/provider/cloud/deploy.yaml
+```
+**Why:** Kubernetes’ `Ingress` resource is only rules; the controller (NGINX here) implements those rules and performs the actual routing of external traffic into the cluster. Without a controller, Ingress resources do nothing.
+
+### 7 — Prepared image registry & pushed image
+
+**Options:** Use Azure Container Registry (ACR) or Docker Hub. Example (ACR):
+
+1. Created ACR:
+```plaintext
+az acr create --resource-group MyResourceGroup --name myacradrian9876 --sku Basic
+```
+2. Tagged & pushed:
+```plaintext
+docker tag nodejs-aks-ingress myacradrian9876.azurecr.io/nodejs-aks-ingress:v1
+docker push myacradrian9876.azurecr.io/nodejs-aks-ingress:v1
+```
+3. Granted AKS access to ACR:
+```plaintext
+az aks update -n myAKSCluster -g MyResourceGroup --attach-acr myacradrian9876
+```
+**Why:** Kubernetes pulls images from a registry. ACR is Azure’s registry — pushing there centralizes your images and allows AKS to pull them. `--attach-acr` gives AKS permission to pull private images.
+
+### 8 — Deployed manifests to AKS
+
+Commands:
+```plaintext
+# ensure the image in deployment.yaml matches the pushed image: myacradrian9876.azurecr.io/...
+kubectl apply -f k8s/deployment.yaml
+kubectl apply -f k8s/service.yaml
+kubectl apply -f k8s/ingress.yaml
+```
+**Why:** `kubectl apply` tells Kubernetes to create or update the resources to match the YAML definitions. This spins up pods, creates the service, and configures ingress rules.
+
+### 9 — Verified and debugged
+
+Commands:
+```plaintext
+kubectl get pods -o wide
+kubectl get svc
+kubectl get ingress
+kubectl describe pod <pod-name>
+kubectl logs <pod-name>        # check container logs
+```
+**Why:** These commands check the running state and help debug issues like image pull errors, containers crashing, or misconfigured services.
+
+### 10 — Accessed the app externally
+
+Checked the external IP of the ingress controller service:
+```plaintext
+kubectl get svc -n ingress-nginx
+```
+- Mapped the host in ingress.yaml to the external IP via DNS or /etc/hosts entry for testing.
+- Opened the hostname in a browser.
+**Why:** The ingress controller gets a cloud load-balancer IP. The Ingress resource routes traffic from that external IP → ingress controller → service → pods.
+
+### 11 — Environment variables / secrets
+- Used a .env locally.
+
+For Kubernetes, I used Secrets or ConfigMaps:
+```plaintext
+kubectl create secret generic my-secret --from-literal=API_KEY=xxxx
+```
+**Why:** Secrets and config maps keep sensitive info and configuration separate from code, and allow different values in different environments (dev/stage/prod).
+
+### 12 — Cleanup (delete Azure resources when finished)
+
+Commands:
+```plaintext
+az group delete --name MyResourceGroup --yes --no-wait
+```
+**Why:** Deleting the resource group removes AKS, ACR, and any other resources inside it to avoid ongoing charges.
+
+## Project Summary
+
+In this project, I built a simple Node.js application, containerized it with Docker, and deployed it onto an Azure Kubernetes Service (AKS) cluster. I configured Kubernetes resources—including a Deployment, Service, and an NGINX Ingress—to run the application and expose it externally. I also set up Azure Container Registry (ACR) to store my Docker image and granted AKS access to pull from it. After deploying everything to the cluster, I verified that the pods, services, and ingress were working correctly, mapped the external IP, and accessed the app through the configured host. Finally, I used Kubernetes Secrets for environment variables and cleaned up the Azure resources when finished.
