@@ -85,22 +85,35 @@ Put these in `k8s/`:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: nodejs-deployment
+  name: nodejs-app
 spec:
   replicas: 2
   selector:
     matchLabels:
-      app: nodejs
+      app: nodejs-app
   template:
     metadata:
       labels:
-        app: nodejs
+        app: nodejs-app
     spec:
       containers:
-      - name: nodejs
-        image: <YOUR_IMAGE>:<TAG>
+      - name: nodejs-app
+        image: myacradrian9876.azurecr.io/nodejs-aks-demo:v1
         ports:
         - containerPort: 3000
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nodejs-app
+spec:
+  selector:
+    app: nodejs-app
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 3000
+  type: ClusterIP
 ```
 
 **Why:** Deployment describes desired state: how many pods, which image, and restart/update behavior. Kubernetes will keep the specified number of replicas running and handle restarts/rolling updates.
@@ -115,14 +128,13 @@ metadata:
     kubernetes.io/ingress.class: nginx
 spec:
   rules:
-  - host: <YOUR_DOMAIN_OR_HOSTNAME>
-    http:
+  - http:
       paths:
       - path: /
         pathType: Prefix
         backend:
           service:
-            name: nodejs-service
+            name: nodejs-app
             port:
               number: 80
 ```
